@@ -1,0 +1,20 @@
+# Сборка и артефакты
+build/
+dist/
+__pycache__/
+*.pyc
+WeatherCollector.spec
+
+# Готовые исполняемые файлы и данные (публикуются в релизах, не в репозитории)
+WeatherCollector.exe
+
+# Рабочие файлы, создаваемые при запуске
+weather.txt
+weather_collector.log
+weather_collector.log.old
+WeatherCollector.ini
+
+# Локальные заметки и инструменты предпросмотра
+preview/
+Текстовый документ.txt
+.zcodeignore

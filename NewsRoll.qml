@@ -1,0 +1,659 @@
+import QtQuick 2.3
+
+/* ============================================================================
+   NewsRoll.qml — титровальный элемент QML для ПО «Форвард Т»
+   (FDTitle Designer / FDOnAir, СофтЛаб-НСК)
+
+   Назначение:
+     постраничный показ новостных сообщений из текстового файла
+     (по мотивам скрипт-объекта TS1_NewsRollCrawl).
+
+   Формат текстового файла (Задание), кодировка UTF-8 или UTF-16 LE с BOM:
+     #Заголовок источника        <- строка, начинающаяся с '#'
+     Предложение 1               <- каждое предложение с новой строки
+     Предложение 2
+     Предложение 3
+     Предложение 4
+     Предложение 5
+     (пустая строка — разделитель, необязательна)
+     #Следующий источник         <- новый блок: заголовок заменяется
+     ...
+
+   Сценарий показа:
+     1. Заголовок '#...' выводится в фиксированном месте (полоса сверху)
+        и держится, пока показываются все предложения своего блока.
+     2. Предложения показываются постранично: сначала 3 строки
+        (каждая с новой строки), затем эффект смены страницы —
+        и следующие 2–3 строки.
+     3. Когда блок закончился и в файле идёт новый '#...' — заголовок
+        меняется (анимация затемнения), показ блока повторяется.
+     4. После последнего блока показ начинается заново (loopPlayback).
+
+   Вариант смены страниц задаётся свойством transitionStyle:
+     "flip"       — переворот вокруг горизонтальной оси (по умолчанию);
+     "slideLeft"  — слайд влево: старая страница уходит влево,
+                    новая приезжает справа;
+     "slideRight" — слайд вправо: старая уходит вправо, новая слева;
+     "slideUp"    — слайд вверх: старая уходит вверх, новая снизу;
+     "slideDown"  — слайд вниз: старая уходит вниз, новая сверху.
+
+   Все времена и оформление регулируются свойствами в блоке «НАСТРОЙКИ».
+   ============================================================================ */
+
+Item {
+    id: root
+
+    /* ==================== НАСТРОЙКИ ==================== */
+
+    // Полный путь к текстовому файлу новостей.
+    // Используйте прямые слэши: file:///D:/Project/newsroll/пикалево.txt
+    // (рекомендуется указывать здесь тот же файл, что и в поле «Задание»
+    //  титровального элемента QML)
+    property string newsFileUrl: "file:///D:/Project/newsroll/пикалево.txt"
+
+    // Время показа ПЕРВОЙ страницы блока (3 предложения), мс
+    property int showTimeFirstMs: 8000
+
+    // Время показа СЛЕДУЮЩИХ страниц блока (2–3 предложения), мс
+    property int showTimeRestMs: 6000
+
+    // Вариант смены страниц: "flip" | "slideLeft" | "slideRight" |
+    //                        "slideUp" | "slideDown"
+    property string transitionStyle: "flip"
+
+    // Длительность эффекта смены страниц (переворот/слайд), мс
+    property int transitionDurationMs: 700
+
+    // Длительность анимации смены заголовка '#...', мс
+    property int headerSwapMs: 300
+
+    // Зацикливание показа (по кругу); false — остаться на последней странице
+    property bool loopPlayback: true
+
+    // Предложений на первой странице блока
+    property int sentencesOnFirstPage: 3
+
+    // Предложений на следующих страницах блока
+    property int sentencesOnNextPage: 3
+
+    // Периодическое перечитывание файла, мс (0 — выключено).
+    // Имеет смысл только в режиме «Реальное время»; в режиме «Файл»
+    // кадры готовятся заранее и перечитывание бессмысленно.
+    property int reloadIntervalMs: 0
+
+    /* --- Оформление --- */
+
+    property color panelColor:      "#B3202740"   // фон панели (AARRGGBB)
+    property color panelBorderColor:"#FF3D6DA6"   // рамка панели
+    property int    panelBorderBasePx: 2
+    property color headerBgColor:   "#FF16406B"   // фон полосы заголовка
+    property color headerTextColor: "#FFFFFFFF"   // цвет текста заголовка
+    property color textColor:       "#FFF4F4F4"   // цвет текста предложений
+    property color accentColor:     "#FFE2543B"   // акцентная полоса слева
+    property color errorColor:      "#FFFF6A4D"
+    property string fontFamily:     "Arial"
+    property bool   enableOutline:  true          // обводка текста для читаемости на видео
+    property color outlineColor:    "#CC101010"
+
+    /* --- Размеры (автоматически масштабируются от высоты региона).
+           Значения по умолчанию рассчитаны на регион designHeight x designWidth
+           (например 560x420 при SD 720x576 или 1280x960 при HD). --- */
+
+    property int designHeight: 420
+    property int headerFontBasePx: 30    // кегль заголовка '#...'
+    property int textFontBasePx: 25      // кегль предложений
+    property int marginBasePx: 18        // внутренние поля
+    property int spacingBasePx: 14       // интервал между предложениями
+    property int radiusBasePx: 10        // скругление углов
+    property int accentBasePx: 8         // толщина акцентной полосы
+
+    readonly property real k: height > 0 ? (height / designHeight) : 1
+    property int headerFontPx:  Math.round(headerFontBasePx * k)
+    property int textFontPx:    Math.round(textFontBasePx * k)
+    property int marginPx:      Math.round(marginBasePx * k)
+    property int spacingPx:     Math.round(spacingBasePx * k)
+    property int radiusPx:      Math.round(radiusBasePx * k)
+    property int accentPx:      Math.round(accentBasePx * k)
+    property int panelBorderPx: Math.round(panelBorderBasePx * k)
+
+    /* ==================== СОСТОЯНИЕ ==================== */
+
+    property var schedule: []          // [{header, lines:[...], rest}]
+    property int currentIdx: -1
+    property string currentHeader: ""
+    property string loadError: ""
+    property string _pendingHeader: ""
+    property string _summary: "не загружено"
+    property bool _transitionActive: false
+
+    // Сводка для диагностики (видно в консоли FDTitle Designer)
+    readonly property string debugSummary: _summary
+
+    function holdTimeFor(step) {
+        return (step && step.rest) ? showTimeRestMs : showTimeFirstMs
+    }
+
+    /* ==================== РАЗБОР ФАЙЛА ==================== */
+
+    // Приводит строку, полученную от XMLHttpRequest, к корректному виду:
+    // учитывает BOM UTF-8/UTF-16 и случай, когда UTF-16 LE был прочитан
+    // побайтово как Latin-1 ('ÿþ' в начале).
+    function decodeText(raw) {
+        if (raw.length > 0 && raw.charCodeAt(0) === 0xFEFF)
+            raw = raw.substring(1)                       // корректно раскодированный BOM
+        if (raw.length >= 2 && raw.charCodeAt(0) === 0xFF && raw.charCodeAt(1) === 0xFE) {
+            var s = ""
+            for (var i = 2; i + 1 < raw.length; i += 2)
+                s += String.fromCharCode(raw.charCodeAt(i) | (raw.charCodeAt(i + 1) << 8))
+            raw = s
+            if (raw.length > 0 && raw.charCodeAt(0) === 0xFEFF) raw = raw.substring(1)
+        } else if (raw.length >= 2 && raw.charCodeAt(0) === 0xFE && raw.charCodeAt(1) === 0xFF) {
+            var s2 = ""
+            for (var j = 2; j + 1 < raw.length; j += 2)
+                s2 += String.fromCharCode((raw.charCodeAt(j) << 8) | raw.charCodeAt(j + 1))
+            raw = s2
+            if (raw.length > 0 && raw.charCodeAt(0) === 0xFEFF) raw = s2.substring(1)
+        }
+        return raw
+    }
+
+    function trimLine(s) {
+        return s.replace(/^\s+/, "").replace(/\s+$/, "")
+    }
+
+    // Строит расписание: блоки '#...' -> страницы по sentencesOnFirstPage /
+    // sentencesOnNextPage предложений.
+    function parseNews(raw) {
+        var text = decodeText(raw)
+        var lines = text.split(/\r\n|\n|\r/)
+        var blocks = []
+        var cur = null
+        for (var i = 0; i < lines.length; i++) {
+            var ln = trimLine(lines[i])
+            if (ln === "")
+                continue
+            if (ln.charAt(0) === "#") {
+                var h = trimLine(ln.replace(/^#+/, ""))
+                cur = { header: h, lines: [] }
+                blocks.push(cur)
+            } else if (cur !== null) {
+                cur.lines.push(ln)      // строки до первого '#' пропускаются
+            }
+        }
+
+        var sch = []
+        var total = 0
+        for (var b = 0; b < blocks.length; b++) {
+            var blk = blocks[b]
+            var idx = 0
+            var first = true
+            while (idx < blk.lines.length) {
+                var n = first ? sentencesOnFirstPage : sentencesOnNextPage
+                var chunk = blk.lines.slice(idx, idx + n)
+                sch.push({ header: blk.header, lines: chunk, rest: !first })
+                total += chunk.length
+                idx += n
+                first = false
+            }
+        }
+        _summary = "блоков=" + blocks.length + "; страниц=" + sch.length +
+                   "; предложений=" + total
+        return sch
+    }
+
+    /* ==================== ЗАГРУЗКА ==================== */
+
+    function normalizedUrl() {
+        return encodeURI(newsFileUrl.replace(/\\/g, "/"))
+    }
+
+    // Если движок ForwardT передаёт содержимое файла «Задание» в QML
+    // через свойство контекста — используем его (пробуем типовые имена;
+    // отсутствие свойства не является ошибкой).
+    function injectedTaskText() {
+        var v
+        try { v = Data;       if (typeof v === "string" && v.length > 0) return v } catch (e) {}
+        try { v = Task;       if (typeof v === "string" && v.length > 0) return v } catch (e) {}
+        try { v = TaskText;   if (typeof v === "string" && v.length > 0) return v } catch (e) {}
+        try { v = TitleData;  if (typeof v === "string" && v.length > 0) return v } catch (e) {}
+        try { v = Content;    if (typeof v === "string" && v.length > 0) return v } catch (e) {}
+        try { v = Ads;        if (typeof v === "string" && v.length > 0) return v } catch (e) {}
+        return ""
+    }
+
+    function loadNews(keepPage) {
+        var injected = injectedTaskText()
+        if (injected !== "") {
+            loadError = ""
+            var sch0 = parseNews(injected)
+            if (!keepPage || JSON.stringify(sch0) !== JSON.stringify(schedule)) {
+                schedule = sch0
+                startShow()
+            }
+            return
+        }
+
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                var txt = xhr.responseText || ""
+                if (txt.length === 0) {
+                    loadError = "Файл не найден или пуст: " + newsFileUrl +
+                                " (для Qt >= 6.5 задайте переменную окружения" +
+                                " QML_XHR_ALLOW_FILE_READ=1)"
+                    if (!keepPage) { schedule = []; startShow() }
+                    return
+                }
+                loadError = ""
+                var newSch = parseNews(txt)
+                if (!keepPage) {
+                    schedule = newSch
+                    startShow()
+                } else if (JSON.stringify(newSch) !== JSON.stringify(schedule)) {
+                    // перечитывание по таймеру: если содержимое изменилось —
+                    // показ начинается заново, иначе продолжается как было
+                    console.log("NewsRoll: файл изменён, показ перезапущен")
+                    schedule = newSch
+                    startShow()
+                }
+            }
+        }
+        try {
+            xhr.open("GET", normalizedUrl())
+            xhr.send()
+        } catch (e) {
+            loadError = "Не удалось открыть файл: " + e
+            schedule = []
+            if (!keepPage) startShow()
+        }
+    }
+
+    // Начало показа: первая страница первого блока
+    function startShow() {
+        holdTimer.stop()
+        flipAnim.stop()
+        slideAnim.stop()
+        _transitionActive = false
+        frontIsA = true
+        pageA.x = 0; pageA.y = 0
+        pageB.x = 0; pageB.y = 0
+        rotA.angle = 0
+        rotB.angle = -90
+        pageB.visible = false
+        pageA.visible = true
+        currentIdx = -1
+        if (schedule.length === 0) {
+            currentHeader = (loadError !== "") ? "НЕТ ДАННЫХ" : ""
+            headerText.text = currentHeader
+            _summary = (loadError !== "") ? ("ошибка: " + loadError) : "файл не содержит блоков '#'"
+            return
+        }
+        applyStep(0)
+        introAnim.restart()
+    }
+
+    // Немедленно показать шаг idx (без анимации)
+    function applyStep(idx) {
+        var step = schedule[idx]
+        currentIdx = idx
+        currentHeader = step.header
+        headerText.text = step.header
+        pageA.setLines(step.lines)
+        holdTimer.interval = holdTimeFor(step)
+        holdTimer.restart()
+    }
+
+    /* ==================== СМЕНА СТРАНИЦ ==================== */
+
+    function advance() {
+        if (schedule.length === 0 || _transitionActive)
+            return
+        var next = currentIdx + 1
+        if (next >= schedule.length) {
+            if (!loopPlayback)
+                return                          // остаёмся на последней странице
+            next = 0
+        }
+        doTransition(next)
+    }
+
+    function doTransition(nextIdx) {
+        var step = schedule[nextIdx]
+        var outPage = frontIsA ? pageA : pageB
+        var inPage  = frontIsA ? pageB : pageA
+        var outRot  = frontIsA ? rotA  : rotB
+        var inRot   = frontIsA ? rotB  : rotA
+
+        _pendingHeader = step.header
+        inPage.setLines(step.lines)
+        inPage.visible = true
+
+        var style = String(transitionStyle).toLowerCase()
+        var half = Math.max(1, transitionDurationMs / 2)
+
+        if (style === "slideleft" || style === "slideright" ||
+            style === "slideup"   || style === "slidedown") {
+            // Слайд: старая и новая страницы едут одновременно.
+            // Направление — куда движется контент:
+            //   slideLeft  -> старая уходит влево (x: 0 -> -w), новая справа (x: +w -> 0)
+            //   slideRight -> старая уходит вправо, новая слева
+            //   slideUp    -> старая уходит вверх  (y: 0 -> -h), новая снизу
+            //   slideDown  -> старая уходит вниз, новая сверху
+            var horiz  = (style === "slideleft"  || style === "slideright")
+            var sign   = (style === "slideleft"  || style === "slideup") ? -1 : 1
+            var extent = horiz ? inPage.width : inPage.height
+            slideOut.target = outPage
+            slideIn.target  = inPage
+            slideOut.property = horiz ? "x" : "y"
+            slideIn.property  = horiz ? "x" : "y"
+            slideOut.from = 0
+            slideOut.to   = sign * extent
+            slideIn.from  = -sign * extent
+            slideIn.to    = 0
+            outRot.angle = 0
+            inRot.angle  = 0
+            slidePause.duration = half
+            _transitionActive = true
+            slideAnim.restart()
+        } else {
+            // Переворот вокруг горизонтальной оси (по умолчанию)
+            outPage.x = 0; outPage.y = 0
+            inPage.x = 0;  inPage.y = 0
+            inRot.angle = -90
+            flipOut.target = outRot
+            flipIn.target  = inRot
+            _transitionActive = true
+            flipAnim.restart()
+        }
+    }
+
+    // Вызывается посередине смены: меняем заголовок, если начался
+    // новый блок (новая строка '#...').
+    function transitionMidpoint() {
+        if (_pendingHeader !== "" && _pendingHeader !== currentHeader) {
+            headerSwapAnim.restart()
+        }
+    }
+
+    // Вызывается по завершении смены страницы
+    function transitionFinished() {
+        if (!_transitionActive)
+            return
+        _transitionActive = false
+        var outPage = frontIsA ? pageA : pageB
+        outPage.visible = false
+        frontIsA = !frontIsA
+        currentIdx = (currentIdx + 1) % schedule.length
+        var step = schedule[currentIdx]
+        currentHeader = step.header
+        holdTimer.interval = holdTimeFor(step)
+        holdTimer.restart()
+    }
+
+    property bool frontIsA: true
+
+    /* ==================== ВИЗУАЛЬНАЯ ЧАСТЬ ==================== */
+
+    opacity: 0     // элемент проявляется после загрузки данных (introAnim)
+
+    // фон панели
+    Rectangle {
+        anchors.fill: parent
+        color: panelColor
+        radius: radiusPx
+        border.color: panelBorderColor
+        border.width: panelBorderPx
+    }
+
+    // Полоса заголовка '#...' — фиксированное место вверху панели
+    Rectangle {
+        id: headerBar
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: marginPx
+        height: Math.round(headerFontPx * 1.75)
+        radius: radiusPx
+        color: headerBgColor
+
+        // акцентная полоса слева
+        Rectangle {
+            id: accentBar
+            width: accentPx
+            radius: accentPx / 2
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.margins: radiusPx / 2
+            color: accentColor
+        }
+
+        Text {
+            id: headerText
+            text: ""
+            anchors.left: accentBar.right
+            anchors.leftMargin: marginPx
+            anchors.right: parent.right
+            anchors.rightMargin: marginPx
+            anchors.verticalCenter: parent.verticalCenter
+            font.family: fontFamily
+            font.pixelSize: headerFontPx
+            font.bold: true
+            color: (root.schedule.length === 0) ? root.errorColor : headerTextColor
+            elide: Text.ElideRight
+            style: enableOutline ? Text.Outline : Text.Normal
+            styleColor: outlineColor
+        }
+    }
+
+    // Слот страницы A (область показа с отсечением) и сама страница.
+    // Слот позиционируется якорями, страница внутри имеет свободные x/y
+    // (для слайдов) и трансформацию вращения (для переворота).
+    Item {
+        id: pageSlotA
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: headerBar.bottom
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: marginPx
+        anchors.rightMargin: marginPx
+        anchors.topMargin: spacingPx
+        anchors.bottomMargin: marginPx
+        clip: true
+
+        Item {
+            id: pageA
+            width: pageSlotA.width
+            height: pageSlotA.height
+            x: 0
+            y: 0
+            antialiasing: true
+            visible: true
+
+            property var lines: []
+            function setLines(ls) { lines = ls }
+
+            transform: Rotation {
+                id: rotA
+                axis { x: 1; y: 0; z: 0 }    // переворот вокруг горизонтальной оси
+                origin.x: pageA.width / 2
+                origin.y: pageA.height / 2
+                angle: 0
+            }
+
+            Column {
+                anchors.centerIn: parent
+                spacing: spacingPx
+                Repeater {
+                    model: pageA.lines
+                    Text {
+                        width: pageA.width
+                        text: modelData
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignLeft
+                        font.family: root.fontFamily
+                        font.pixelSize: root.textFontPx
+                        color: root.textColor
+                        style: root.enableOutline ? Text.Outline : Text.Normal
+                        styleColor: root.outlineColor
+                    }
+                }
+            }
+        }
+    }
+
+    Item {
+        id: pageSlotB
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: headerBar.bottom
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: marginPx
+        anchors.rightMargin: marginPx
+        anchors.topMargin: spacingPx
+        anchors.bottomMargin: marginPx
+        clip: true
+
+        Item {
+            id: pageB
+            width: pageSlotB.width
+            height: pageSlotB.height
+            x: 0
+            y: 0
+            antialiasing: true
+            visible: false
+
+            property var lines: []
+            function setLines(ls) { lines = ls }
+
+            transform: Rotation {
+                id: rotB
+                axis { x: 1; y: 0; z: 0 }
+                origin.x: pageB.width / 2
+                origin.y: pageB.height / 2
+                angle: -90
+            }
+
+            Column {
+                anchors.centerIn: parent
+                spacing: spacingPx
+                Repeater {
+                    model: pageB.lines
+                    Text {
+                        width: pageB.width
+                        text: modelData
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignLeft
+                        font.family: root.fontFamily
+                        font.pixelSize: root.textFontPx
+                        color: root.textColor
+                        style: root.enableOutline ? Text.Outline : Text.Normal
+                        styleColor: root.outlineColor
+                    }
+                }
+            }
+        }
+    }
+
+    // Сообщение об ошибке загрузки — вместо предложений
+    Text {
+        visible: root.schedule.length === 0 && root.loadError !== ""
+        anchors.centerIn: parent
+        width: parent.width - 2 * marginPx
+        text: root.loadError
+        wrapMode: Text.WordWrap
+        horizontalAlignment: Text.AlignHCenter
+        font.family: fontFamily
+        font.pixelSize: Math.round(textFontPx * 0.8)
+        color: errorColor
+    }
+
+    /* ==================== АНИМАЦИИ И ТАЙМЕРЫ ==================== */
+
+    // Проявление элемента после загрузки файла
+    SequentialAnimation {
+        id: introAnim
+        NumberAnimation { target: root; property: "opacity"; from: 0; to: 1; duration: 400 }
+    }
+
+    // Переворот: текущая страница складывается вверх, следующая
+    // разворачивается на её месте; в середине меняется заголовок
+    SequentialAnimation {
+        id: flipAnim
+        NumberAnimation {
+            id: flipOut
+            property: "angle"
+            from: 0; to: 90
+            duration: Math.max(1, transitionDurationMs / 2)
+            easing.type: Easing.InQuad
+        }
+        ScriptAction { script: root.transitionMidpoint() }
+        NumberAnimation {
+            id: flipIn
+            property: "angle"
+            from: -90; to: 0
+            duration: Math.max(1, transitionDurationMs / 2)
+            easing.type: Easing.OutQuad
+        }
+        onStopped: root.transitionFinished()
+    }
+
+    // Слайд: старая и новая страницы едут одновременно, заголовок
+    // меняется посередине движения
+    ParallelAnimation {
+        id: slideAnim
+        NumberAnimation {
+            id: slideOut
+            property: "x"
+            duration: Math.max(1, transitionDurationMs)
+            easing.type: Easing.InOutQuad
+        }
+        NumberAnimation {
+            id: slideIn
+            property: "x"
+            duration: Math.max(1, transitionDurationMs)
+            easing.type: Easing.InOutQuad
+        }
+        SequentialAnimation {
+            PauseAnimation { id: slidePause; duration: 350 }
+            ScriptAction { script: root.transitionMidpoint() }
+        }
+        onStopped: root.transitionFinished()
+    }
+
+    // Смена заголовка '#...' — затемнение и появление нового текста
+    SequentialAnimation {
+        id: headerSwapAnim
+        NumberAnimation {
+            target: headerText; property: "opacity"
+            to: 0; duration: Math.max(1, headerSwapMs / 2)
+        }
+        ScriptAction { script: { headerText.text = root._pendingHeader; root.currentHeader = root._pendingHeader } }
+        NumberAnimation {
+            target: headerText; property: "opacity"
+            to: 1; duration: Math.max(1, headerSwapMs / 2)
+        }
+    }
+
+    // Время удержания текущей страницы
+    Timer {
+        id: holdTimer
+        interval: showTimeFirstMs
+        repeat: false
+        onTriggered: root.advance()
+    }
+
+    // Периодическое перечитывание файла (reloadIntervalMs > 0)
+    Timer {
+        id: reloadTimer
+        interval: Math.max(1000, reloadIntervalMs)
+        running: reloadIntervalMs > 0 && root.opacity > 0.99
+        repeat: true
+        onTriggered: root.loadNews(true)
+    }
+
+    Component.onCompleted: {
+        console.log("NewsRoll: загрузка " + newsFileUrl)
+        loadNews(false)
+    }
+}

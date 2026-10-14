@@ -1,6 +1,6 @@
 # 🌦 WeatherRoll — полноэкранный прогноз погоды для эфира и табло
 
-![Release](https://img.shields.io/badge/release-v1.1.0-blue)
+![Release](https://img.shields.io/badge/release-v1.1.1-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Qt%205.6%2B-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Data](https://img.shields.io/badge/%D0%B8%D1%81%D1%82%D0%BE%D1%87%D0%BD%D0%B8%D0%BA-Open--Meteo%20(%D0%B1%D0%B5%D0%B7%20%D0%BA%D0%BB%D1%8E%D1%87%D0%B5%D0%B9)-orange)
@@ -222,6 +222,19 @@ FDTitle Designer **не выводит** пользовательские сво
 3. Музыка играет циклически.
 4. `loopPlayback: false` — после последней секции конечное видео
    (`outroVideoUrl`) или плавное затемнение.
+
+### Длительность задания (расписание «Форвард Т»)
+
+Скрипт сам вычисляет длительность одного цикла показа и отдаёт её движку —
+поле **«Длительность»** задания в FDTitle Designer и расписании заполняется
+автоматически (как у референсных элементов SoftLab): корневое свойство QML
+`duration` = заставка + время всех секций (`sectionShowTimeMs` /
+`sectionTimes`) + переходы (+ конечное затемнение при показе не по кругу).
+Пример: заставка 5 с + 3 секции × 9 с + 3 перехода × 0.8 с ≈ 0:00:34.400.
+В эфире автосмена секций идёт только при статусе элемента «Running»
+(`SLRunTime.statusElement == 4` — как в шаблонах Яндекс/Гисметео); в
+автономном запуске показ идёт всегда. То же исправление внесено в
+NewsRoll.qml (длительность = страницы × время показа).
 
 ### Примечания по мультимедиа
 

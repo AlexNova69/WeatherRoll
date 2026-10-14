@@ -54,6 +54,15 @@ import QtQuick 2.3
         заставка (outroVideoUrl либо плавное затемнение). Esc/Q — вызвать
         досрочно; в автономном режиме повторное нажатие закрывает окно.
 
+   ДЛИТЕЛЬНОСТЬ ЗАДАНИЯ скрипт вычисляет сам и отдаёт движку «Форвард Т»
+   (поле «Длительность» задания в дизайнере и расписании, как у
+   референсных элементов SoftLab): корневое свойство duration = заставка +
+   время всех секций (sectionShowTimeMs / sectionTimes) + переходы
+   (+ конечное затемнение при показе не по кругу). В эфире автосмена
+   секций идёт только при статусе элемента «Running» — контекст
+   SLRunTime.statusElement == 4 (в автономном запуске SLRunTime нет,
+   показ идёт всегда).
+
    Фон: backgroundImageUrl (jpg/png; tga — если сборка Qt содержит плагин
    TGA; при ошибке загрузки используется тёмно-синий градиент).
 
@@ -194,6 +203,43 @@ Item {
     property int descBandPx:    Math.round(150 * k)
 
     /* ==================== СОСТОЯНИЕ ==================== */
+
+    // ДЛИТЕЛЬНОСТЬ ЗАДАНИЯ — один цикл показа, мс. Движок «Форвард Т»
+    // читает это свойство у корневого элемента QML (как у референсных
+    // элементов SoftLab: поле «Длительность» задания в дизайнере и
+    // расписании, GetTaskInfo): заставка + время всех секций + переходы
+    // + конечное затемнение, если показ не по кругу.
+    property int duration: {
+        var total = Math.min(8000, Math.max(3000, splashDurationMs))
+        if (sections.length > 0) {
+            for (var i = 0; i < sections.length; i++)
+                total += holdTimeFor(sections[i])
+            if (autoAdvance)
+                total += (loopPlayback ? sections.length : sections.length - 1)
+                         * transitionDurationMs
+        }
+        if (!loopPlayback)
+            total += 900      // конечное затемнение без видео
+        return total
+    }
+
+    // Состояние от движка «Форвард Т»: SLRunTime.statusElement == 4 —
+    // элемент в эфире (eRunning). Автопереключение секций идёт только
+    // «в эфире»; в автономном запуске SLRunTime нет — всегда true
+    // (шаблон референсного элемента Яндекса/Гисметео).
+    property bool elementRunning: true
+
+    function initElementRunning() {
+        try {
+            if (typeof SLRunTime !== "undefined" &&
+                    SLRunTime.hasOwnProperty("statusElement"))
+                elementRunning = Qt.binding(function() {
+                    return SLRunTime.statusElement === 4 })
+        } catch (e) {
+            console.log("WeatherRoll: SLRunTime недоступен —" +
+                        " автономный режим (" + e + ")")
+        }
+    }
 
     // sections: [{title, cards:[{label,value}], desc}]
     property var sections: []
@@ -637,6 +683,8 @@ Item {
         applyImmediate(0)
         contentRoot.opacity = 0
         introAnim.restart()
+        console.log("WeatherRoll: показ начат, длительность задания = " +
+                    duration + " мс")
         if (avAvailable && musicUrl !== "")
             avLoader.item.startMusic(musicUrl, musicVolume)
     }
@@ -1780,12 +1828,19 @@ Item {
         onStopped: root.transitionFinished()
     }
 
-    // Время удержания секции
+    // Время удержания секции (когда элемент не «в эфире» — просто
+    // перевзводим таймер: показ стоит на текущей секции)
     Timer {
         id: holdTimer
         interval: sectionShowTimeMs
         repeat: false
-        onTriggered: root.holdElapsed()
+        onTriggered: {
+            if (!root.elementRunning) {
+                holdTimer.restart()
+                return
+            }
+            root.holdElapsed()
+        }
     }
 
     // Статическая заставка: 3–8 секунд (ограничение по заданию)
@@ -1861,6 +1916,7 @@ Item {
 
     Component.onCompleted: {
         console.log("WeatherRoll: загрузка " + weatherFileUrl)
-        loadSettings()      // ini -> bootAfterSettings() -> загрузка данных
+        initElementRunning()   // SLRunTime (Форвард Т): статус «в эфире»
+        loadSettings()         // ini -> bootAfterSettings() -> данные
     }
 }

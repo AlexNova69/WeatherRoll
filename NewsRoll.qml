@@ -52,10 +52,10 @@ Item {
     property string newsFileUrl: "file:///D:/Project/newsroll/пикалево.txt"
 
     // Время показа ПЕРВОЙ страницы блока (3 предложения), мс
-    property int showTimeFirstMs: 8000
+    property int showTimeFirstMs: 9000
 
     // Время показа СЛЕДУЮЩИХ страниц блока (2–3 предложения), мс
-    property int showTimeRestMs: 6000
+    property int showTimeRestMs: 9000
 
     // Вариант смены страниц: "flip" | "slideLeft" | "slideRight" |
     //                        "slideUp" | "slideDown"
@@ -125,6 +125,35 @@ Item {
     property string _pendingHeader: ""
     property string _summary: "не загружено"
     property bool _transitionActive: false
+
+    // ДЛИТЕЛЬНОСТЬ ЗАДАНИЯ — один цикл показа, мс. Движок «Форвард Т»
+    // читает это свойство у корневого элемента QML (поле «Длительность»
+    // задания в дизайнере и расписании, GetTaskInfo): считается по
+    // количеству страниц и времени их показа.
+    property int duration: {
+        var total = 0
+        for (var i = 0; i < schedule.length; i++)
+            total += holdTimeFor(schedule[i])
+        if (schedule.length > 1)
+            total += (loopPlayback ? schedule.length : schedule.length - 1)
+                     * transitionDurationMs
+        return total
+    }
+
+    // Элемент «в эфире» (SLRunTime.statusElement == 4, движок «Форвард Т»);
+    // в автономном запуске SLRunTime нет — всегда true
+    property bool elementRunning: true
+
+    function initElementRunning() {
+        try {
+            if (typeof SLRunTime !== "undefined" &&
+                    SLRunTime.hasOwnProperty("statusElement"))
+                elementRunning = Qt.binding(function() {
+                    return SLRunTime.statusElement === 4 })
+        } catch (e) {
+            console.log("NewsRoll: SLRunTime недоступен — автономный режим")
+        }
+    }
 
     // Сводка для диагностики (видно в консоли FDTitle Designer)
     readonly property string debugSummary: _summary
@@ -635,12 +664,18 @@ Item {
         }
     }
 
-    // Время удержания текущей страницы
+    // Время удержания текущей страницы (вне эфира — перевзводим таймер)
     Timer {
         id: holdTimer
         interval: showTimeFirstMs
         repeat: false
-        onTriggered: root.advance()
+        onTriggered: {
+            if (!root.elementRunning) {
+                holdTimer.restart()
+                return
+            }
+            root.advance()
+        }
     }
 
     // Периодическое перечитывание файла (reloadIntervalMs > 0)
@@ -654,6 +689,7 @@ Item {
 
     Component.onCompleted: {
         console.log("NewsRoll: загрузка " + newsFileUrl)
+        initElementRunning()   // SLRunTime (Форвард Т): статус «в эфире»
         loadNews(false)
     }
 }

@@ -18,3 +18,12 @@ WeatherCollector.ini
 preview/
 Текстовый документ.txt
 .zcodeignore
+
+# Медиа-файлы заставок/музыки (кладутся рядом, в репозиторий не публикуются)
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.wav
+*.mp3
+zas.*

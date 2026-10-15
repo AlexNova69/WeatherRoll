@@ -54,14 +54,18 @@ import QtQuick 2.3
         заставка (outroVideoUrl либо плавное затемнение). Esc/Q — вызвать
         досрочно; в автономном режиме повторное нажатие закрывает окно.
 
-   ДЛИТЕЛЬНОСТЬ ЗАДАНИЯ скрипт вычисляет сам и отдаёт движку «Форвард Т»
-   (поле «Длительность» задания в дизайнере и расписании, как у
-   референсных элементов SoftLab): корневое свойство duration = заставка +
-   время всех секций (sectionShowTimeMs / sectionTimes) + переходы
-   (+ конечное затемнение при показе не по кругу). В эфире автосмена
-   секций идёт только при статусе элемента «Running» — контекст
-   SLRunTime.statusElement == 4 (в автономном запуске SLRunTime нет,
-   показ идёт всегда).
+   ДЛИТЕЛЬНОСТЬ ЗАДАНИЯ. Корневое свойство duration скрипт вычисляет сам:
+   заставка + время всех секций (sectionShowTimeMs / sectionTimes) +
+   переходы (+ конечное затемнение при показе не по кругу); при старте
+   значение печатается в консоль дизайнера («показ начат, длительность
+   задания = N мс»). ПРОВЕРЕНО ОПЫТОМ: QML-элемент ForwardT не отдаёт
+   длительность задания в расписание автоматически (GetTaskInfo без
+   дизайн-инициализации всегда возвращает 0) — так же устроены и
+   референсные виджеты Яндекс/Гисметео. Поэтому для FDAir3 длительность
+   задаётся ШТАТНО на стороне дизайнера: в поле «Длительность» элемента
+   (Задание -> Длительность, формат чч:мм:сс.мс) впишите значение из
+   консоли, и/или включите «Зациклить задание» (Loop) — задание будет
+   повторяться циклами до конца отведённого окна в расписании.
 
    Фон: backgroundImageUrl (jpg/png; tga — если сборка Qt содержит плагин
    TGA; при ошибке загрузки используется тёмно-синий градиент).
@@ -224,22 +228,11 @@ Item {
     }
 
     // Состояние от движка «Форвард Т»: SLRunTime.statusElement == 4 —
-    // элемент в эфире (eRunning). Автопереключение секций идёт только
-    // «в эфире»; в автономном запуске SLRunTime нет — всегда true
-    // (шаблон референсного элемента Яндекса/Гисметео).
+    // элемент в эфире (eRunning). В автономном запуске SLRunTime нет —
+    // всегда true. ГЕЙТ НЕ ИСПОЛЬЗУЕТСЯ: проверка на «4» подвешивала
+    // показ в FDTitle Designer (там статус иной), поэтому показ всегда
+    // идёт своими таймерами (как в исходном NewsRoll).
     property bool elementRunning: true
-
-    function initElementRunning() {
-        try {
-            if (typeof SLRunTime !== "undefined" &&
-                    SLRunTime.hasOwnProperty("statusElement"))
-                elementRunning = Qt.binding(function() {
-                    return SLRunTime.statusElement === 4 })
-        } catch (e) {
-            console.log("WeatherRoll: SLRunTime недоступен —" +
-                        " автономный режим (" + e + ")")
-        }
-    }
 
     // sections: [{title, cards:[{label,value}], desc}]
     property var sections: []
@@ -1828,19 +1821,12 @@ Item {
         onStopped: root.transitionFinished()
     }
 
-    // Время удержания секции (когда элемент не «в эфире» — просто
-    // перевзводим таймер: показ стоит на текущей секции)
+    // Время удержания секции
     Timer {
         id: holdTimer
         interval: sectionShowTimeMs
         repeat: false
-        onTriggered: {
-            if (!root.elementRunning) {
-                holdTimer.restart()
-                return
-            }
-            root.holdElapsed()
-        }
+        onTriggered: root.holdElapsed()
     }
 
     // Статическая заставка: 3–8 секунд (ограничение по заданию)
@@ -1916,7 +1902,6 @@ Item {
 
     Component.onCompleted: {
         console.log("WeatherRoll: загрузка " + weatherFileUrl)
-        initElementRunning()   // SLRunTime (Форвард Т): статус «в эфире»
         loadSettings()         // ini -> bootAfterSettings() -> данные
     }
 }

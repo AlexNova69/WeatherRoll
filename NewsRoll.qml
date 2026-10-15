@@ -140,20 +140,10 @@ Item {
         return total
     }
 
-    // Элемент «в эфире» (SLRunTime.statusElement == 4, движок «Форвард Т»);
-    // в автономном запуске SLRunTime нет — всегда true
+    // Состояние от движка «Форвард Т» (SLRunTime.statusElement).
+    // ГЕЙТ НЕ ИСПОЛЬЗУЕТСЯ: проверка «== 4» подвешивала показ страниц
+    // в FDTitle Designer, поэтому показ всегда идёт своими таймерами.
     property bool elementRunning: true
-
-    function initElementRunning() {
-        try {
-            if (typeof SLRunTime !== "undefined" &&
-                    SLRunTime.hasOwnProperty("statusElement"))
-                elementRunning = Qt.binding(function() {
-                    return SLRunTime.statusElement === 4 })
-        } catch (e) {
-            console.log("NewsRoll: SLRunTime недоступен — автономный режим")
-        }
-    }
 
     // Сводка для диагностики (видно в консоли FDTitle Designer)
     readonly property string debugSummary: _summary
@@ -664,18 +654,12 @@ Item {
         }
     }
 
-    // Время удержания текущей страницы (вне эфира — перевзводим таймер)
+    // Время удержания текущей страницы
     Timer {
         id: holdTimer
         interval: showTimeFirstMs
         repeat: false
-        onTriggered: {
-            if (!root.elementRunning) {
-                holdTimer.restart()
-                return
-            }
-            root.advance()
-        }
+        onTriggered: root.advance()
     }
 
     // Периодическое перечитывание файла (reloadIntervalMs > 0)
@@ -689,7 +673,6 @@ Item {
 
     Component.onCompleted: {
         console.log("NewsRoll: загрузка " + newsFileUrl)
-        initElementRunning()   // SLRunTime (Форвард Т): статус «в эфире»
         loadNews(false)
     }
 }

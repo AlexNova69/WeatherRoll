@@ -89,7 +89,14 @@ Item {
 
     // Заставка в начале цикла показа, мс (по типу WeatherRoll).
     // 0 — выключена; включённая ограничивается диапазоном 3000..8000.
-    property int splashDurationMs: 0
+    property int splashDurationMs: 3000
+
+    // Файл настроек NewsRoll.ini (ищется рядом с NewsRoll.qml).
+    // Значения из ini переопределяют значения по умолчанию, заданные
+    // свойствами ниже; пустое значение или отсутствие файла — используются
+    // свойства QML. Позволяет менять настройки без правки QML (FDTitle
+    // Designer пользовательские свойства QML-элемента не показывает).
+    property string settingsUrl: Qt.resolvedUrl("NewsRoll.ini")
 
     /* --- Оформление --- */
 
@@ -331,6 +338,100 @@ Item {
         }
     }
 
+    /* ==================== НАСТРОЙКИ ИЗ NewsRoll.ini ==================== */
+
+    // Читает локальный файл асинхронно; okCb(text) / failCb()
+    function readTextAsync(url, okCb, failCb) {
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                var txt = xhr.responseText || ""
+                if (txt.length === 0) { if (failCb) failCb(); return }
+                okCb(txt)
+            }
+        }
+        try {
+            xhr.open("GET", url)
+            xhr.send()
+        } catch (e) {
+            if (failCb) failCb()
+        }
+    }
+
+    // Применяет «ключ = значение» из ini к одноимённым свойствам.
+    // Пустое значение пропускается (остаётся значение свойства из QML).
+    // Комментарий после значения отделяется « ; » (пробел-;-пробел).
+    function applySettingsIni(raw) {
+        var types = {
+            newsFileUrl: "string",
+            showTimeFirstMs: "int",    showTimeRestMs: "int",
+            transitionStyle: "string", transitionDurationMs: "int",
+            headerSwapMs: "int",       loopPlayback: "bool",
+            sentencesOnFirstPage: "int", sentencesOnNextPage: "int",
+            reloadIntervalMs: "int",   splashDurationMs: "int",
+            fontFamily: "string",      enableOutline: "bool",
+            panelColor: "color",       panelBorderColor: "color",
+            headerBgColor: "color",    headerTextColor: "color",
+            textColor: "color",        accentColor: "color",
+            errorColor: "color",       outlineColor: "color"
+        }
+        var lines = decodeText(raw).split(/\r\n|\n|\r/)
+        var applied = 0
+        for (var i = 0; i < lines.length; i++) {
+            var ln = trimLine(lines[i])
+            if (ln === "" || ln.charAt(0) === ";" || ln.charAt(0) === "[")
+                continue
+            var eq = ln.indexOf("=")
+            if (eq < 1) continue
+            var key = trimLine(ln.substring(0, eq))
+            var val = trimLine(ln.substring(eq + 1))
+            var ci = val.search(/\s;\s/)
+            if (ci >= 0)
+                val = trimLine(val.substring(0, ci))
+            if (val.charAt(0) === ";")
+                val = ""                 // значение — только комментарий
+            if (val === "" || !(key in types)) continue
+            var t = types[key]
+            if (t === "bool") {
+                root[key] = /^(1|true|да|yes|on)$/i.test(val)
+            } else if (t === "int") {
+                var n = parseInt(val, 10)
+                if (!isNaN(n)) root[key] = n
+            } else {
+                root[key] = val
+            }
+            applied++
+        }
+        if (applied > 0)
+            console.log("NewsRoll: из NewsRoll.ini применено значений: " + applied)
+    }
+
+    function loadSettings() {
+        console.log("NewsRoll: настройки " + settingsUrl)
+        readTextAsync(settingsUrl,
+            function (txt) {
+                try { applySettingsIni(txt) } catch (e) {
+                    console.log("NewsRoll: ошибка NewsRoll.ini: " + e)
+                }
+                loadNews(false)
+            },
+            function () {
+                console.log("NewsRoll: NewsRoll.ini не найден или пуст —" +
+                            " используются значения свойств из QML")
+                loadNews(false)
+            })
+    }
+
+    // Периодическое обновление: сначала настройки, затем данные
+    function reloadAll() {
+        readTextAsync(settingsUrl,
+            function (txt) {
+                try { applySettingsIni(txt) } catch (e) {}
+                loadNews(true)
+            },
+            function () { loadNews(true) })
+    }
+
     // Начало показа: заставка (если включена), затем первая страница
     function startShow() {
         if (splashDurationMs > 0) {
@@ -345,7 +446,8 @@ Item {
         flipAnim.stop()
         slideAnim.stop()
         _transitionActive = false
-        splashActive = true
+        introAnim.restart()      // проявить корень: заставка внутри него,
+        splashActive = true      // иначе она невидима при opacity: 0
         splashTimer.restart()
     }
 
@@ -784,17 +886,18 @@ Item {
         onTriggered: root.beginShow()
     }
 
-    // Периодическое перечитывание файла (reloadIntervalMs > 0)
+    // Периодическое перечитывание (reloadIntervalMs > 0):
+    // вместе с данными обновляются и настройки NewsRoll.ini
     Timer {
         id: reloadTimer
         interval: Math.max(1000, reloadIntervalMs)
         running: reloadIntervalMs > 0 && root.opacity > 0.99
         repeat: true
-        onTriggered: root.loadNews(true)
+        onTriggered: root.reloadAll()
     }
 
     Component.onCompleted: {
         console.log("NewsRoll: загрузка " + newsFileUrl)
-        loadNews(false)
+        loadSettings()      // ini -> загрузка данных
     }
 }

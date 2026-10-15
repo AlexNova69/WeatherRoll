@@ -228,11 +228,43 @@ Item {
     }
 
     // Состояние от движка «Форвард Т»: SLRunTime.statusElement == 4 —
-    // элемент в эфире (eRunning). В автономном запуске SLRunTime нет —
-    // всегда true. ГЕЙТ НЕ ИСПОЛЬЗУЕТСЯ: проверка на «4» подвешивала
-    // показ в FDTitle Designer (там статус иной), поэтому показ всегда
-    // идёт своими таймерами (как в исходном NewsRoll).
-    property bool elementRunning: true
+    // элемент в эфире (eRunning). Задание загружается заранее, поэтому
+    // скрипт опрашивает статус и при КАЖДОМ входе в эфир запускает цикл
+    // заново (заставка + первая секция) — показ не «проскакивает».
+    // В автономном запуске SLRunTime нет — показ идёт сразу.
+    property bool elementRunning: false      // диагностика
+    property bool _airStarted: false
+
+    Timer {
+        id: airPollTimer
+        interval: 400
+        repeat: true
+        running: true
+        onTriggered: root.pollRuntime()
+    }
+
+    function pollRuntime() {
+        try {
+            if (typeof SLRunTime === "undefined") return
+            if (!SLRunTime.hasOwnProperty("statusElement")) return
+            var r = (SLRunTime.statusElement === 4)
+            elementRunning = r
+            if (!r) {
+                _airStarted = false              // вышли из эфира
+            } else if (!_airStarted) {
+                restartForAir()
+            }
+        } catch (e) { }
+    }
+
+    function restartForAir() {
+        _airStarted = true
+        console.log("WeatherRoll: выход в эфир — цикл с начала," +
+                    " длительность задания = " + duration + " мс")
+        phase = "boot"
+        avTried = true
+        maybeStartSplash()      // заставка/видео -> startShow() с секции 0
+    }
 
     // sections: [{title, cards:[{label,value}], desc}]
     property var sections: []

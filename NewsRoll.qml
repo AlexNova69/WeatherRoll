@@ -29,6 +29,12 @@ import QtQuick 2.3
         меняется (анимация затемнения), показ блока повторяется.
      4. После последнего блока показ начинается заново (loopPlayback).
 
+   ВЫХОД В ЭФИР: задание движок загружает заранее, поэтому скрипт следит
+   за статусом SLRunTime.statusElement (4 = «Running») и при КАЖДОМ
+   входе в эфир начинает цикл заново — первая страница всегда показывается
+   полное время. По желанию включается заставка splashDurationMs
+   (по типу WeatherRoll; 0 — выключена).
+
    Вариант смены страниц задаётся свойством transitionStyle:
      "flip"       — переворот вокруг горизонтальной оси (по умолчанию);
      "slideLeft"  — слайд влево: старая страница уходит влево,
@@ -52,7 +58,7 @@ Item {
     property string newsFileUrl: "file:///D:/Project/newsroll/пикалево.txt"
 
     // Время показа ПЕРВОЙ страницы блока (3 предложения), мс
-    property int showTimeFirstMs: 9000
+    property int showTimeFirstMs: 12000
 
     // Время показа СЛЕДУЮЩИХ страниц блока (2–3 предложения), мс
     property int showTimeRestMs: 9000
@@ -80,6 +86,10 @@ Item {
     // Имеет смысл только в режиме «Реальное время»; в режиме «Файл»
     // кадры готовятся заранее и перечитывание бессмысленно.
     property int reloadIntervalMs: 0
+
+    // Заставка в начале цикла показа, мс (по типу WeatherRoll).
+    // 0 — выключена; включённая ограничивается диапазоном 3000..8000.
+    property int splashDurationMs: 0
 
     /* --- Оформление --- */
 
@@ -125,13 +135,13 @@ Item {
     property string _pendingHeader: ""
     property string _summary: "не загружено"
     property bool _transitionActive: false
+    property bool splashActive: false
 
-    // ДЛИТЕЛЬНОСТЬ ЗАДАНИЯ — один цикл показа, мс. Движок «Форвард Т»
-    // читает это свойство у корневого элемента QML (поле «Длительность»
-    // задания в дизайнере и расписании, GetTaskInfo): считается по
-    // количеству страниц и времени их показа.
+    // ДЛИТЕЛЬНОСТЬ ЗАДАНИЯ — один цикл показа, мс: заставка (если
+    // включена) + страницы и переходы.
     property int duration: {
-        var total = 0
+        var total = (splashDurationMs > 0)
+                    ? Math.min(8000, Math.max(3000, splashDurationMs)) : 0
         for (var i = 0; i < schedule.length; i++)
             total += holdTimeFor(schedule[i])
         if (schedule.length > 1)
@@ -140,10 +150,44 @@ Item {
         return total
     }
 
-    // Состояние от движка «Форвард Т» (SLRunTime.statusElement).
-    // ГЕЙТ НЕ ИСПОЛЬЗУЕТСЯ: проверка «== 4» подвешивала показ страниц
-    // в FDTitle Designer, поэтому показ всегда идёт своими таймерами.
-    property bool elementRunning: true
+    /* ---------- ВЫХОД В ЭФИР: цикл каждый раз с первой страницы ---------- */
+
+    // Задание движок загружает ЗАРАНЕЕ, поэтому таймеры скрипта стартуют
+    // до эфира и первая страница «проскакивает». Скрипт опрашивает статус
+    // SLRunTime.statusElement (4 = «Running», как в референсных элементах
+    // SoftLab) и при КАЖДОМ входе в эфир перезапускает цикл с начала.
+    // В автономном запуске SLRunTime нет — показ идёт сразу.
+    property bool elementRunning: false      // диагностика
+    property bool _airStarted: false
+
+    Timer {
+        id: airPollTimer
+        interval: 400
+        repeat: true
+        running: true
+        onTriggered: root.pollRuntime()
+    }
+
+    function pollRuntime() {
+        try {
+            if (typeof SLRunTime === "undefined") return
+            if (!SLRunTime.hasOwnProperty("statusElement")) return
+            var r = (SLRunTime.statusElement === 4)
+            elementRunning = r
+            if (!r) {
+                _airStarted = false              // вышли из эфира
+            } else if (!_airStarted) {
+                _airStarted = true
+                restartForAir()
+            }
+        } catch (e) { }
+    }
+
+    function restartForAir() {
+        console.log("NewsRoll: выход в эфир — цикл с первой страницы," +
+                    " длительность задания = " + duration + " мс")
+        startShow()
+    }
 
     // Сводка для диагностики (видно в консоли FDTitle Designer)
     readonly property string debugSummary: _summary
@@ -287,8 +331,27 @@ Item {
         }
     }
 
-    // Начало показа: первая страница первого блока
+    // Начало показа: заставка (если включена), затем первая страница
     function startShow() {
+        if (splashDurationMs > 0) {
+            showSplash()
+            return
+        }
+        beginShow()
+    }
+
+    function showSplash() {
+        holdTimer.stop()
+        flipAnim.stop()
+        slideAnim.stop()
+        _transitionActive = false
+        splashActive = true
+        splashTimer.restart()
+    }
+
+    function beginShow() {
+        splashActive = false
+        splashTimer.stop()
         holdTimer.stop()
         flipAnim.stop()
         slideAnim.stop()
@@ -587,6 +650,58 @@ Item {
         color: errorColor
     }
 
+    // --- заставка (по типу WeatherRoll) ---
+    Item {
+        id: staticSplash
+        anchors.fill: parent
+        visible: root.splashActive
+        z: 10
+
+        Rectangle { anchors.fill: parent; color: "#FF0B1B33"; radius: radiusPx }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: Math.round(26 * root.k)
+
+            Rectangle {
+                id: pulseRing
+                width: Math.round(120 * root.k)
+                height: width
+                radius: width / 2
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: "#00000000"
+                border.color: root.accentColor
+                border.width: Math.max(2, Math.round(5 * root.k))
+
+                SequentialAnimation {
+                    id: pulseAnim
+                    running: root.splashActive
+                    loops: Animation.Infinite
+                    NumberAnimation { target: pulseRing; property: "scale"; from: 0.85; to: 1.15; duration: 900; easing.type: Easing.InOutQuad }
+                    NumberAnimation { target: pulseRing; property: "scale"; from: 1.15; to: 0.85; duration: 900; easing.type: Easing.InOutQuad }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "\u2739"
+                    color: root.accentColor
+                    font.pixelSize: Math.round(48 * root.k)
+                }
+            }
+
+            Text {
+                text: "\u041D\u041E\u0412\u041E\u0421\u0422\u0418"   // «НОВОСТИ»
+                anchors.horizontalCenter: parent.horizontalCenter
+                font.family: root.fontFamily
+                font.pixelSize: Math.round(52 * root.k)
+                font.bold: true
+                color: "#FFFFFFFF"
+                style: Text.Outline
+                styleColor: root.outlineColor
+            }
+        }
+    }
+
     /* ==================== АНИМАЦИИ И ТАЙМЕРЫ ==================== */
 
     // Проявление элемента после загрузки файла
@@ -660,6 +775,13 @@ Item {
         interval: showTimeFirstMs
         repeat: false
         onTriggered: root.advance()
+    }
+
+    // Статическая заставка (3–8 секунд, ограничение как в WeatherRoll)
+    Timer {
+        id: splashTimer
+        interval: Math.min(8000, Math.max(3000, splashDurationMs))
+        onTriggered: root.beginShow()
     }
 
     // Периодическое перечитывание файла (reloadIntervalMs > 0)
